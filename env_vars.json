@@ -1,1 +1,2 @@
-{"OPENAI_API_KEY":"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"}
+#this is the sample .json file. Create a similar one by copying and pasting the line below and replacing the "Your API Key here" with the key you are provided with.
+{"OPENAI_API_KEY":"Your API Key here"}
