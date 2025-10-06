@@ -49,32 +49,76 @@ SELECTION-SCREEN END OF BLOCK blk4.
 CLASS lcl_condition_contract DEFINITION FINAL CREATE PRIVATE.
   PUBLIC SECTION.
     TYPES : BEGIN OF lty_condition_data,
-              contract_number TYPE char10, "For change
-              currency        TYPE waers, "Change: Contract Currency
-              contract_type   TYPE char4,
-              process_variant TYPE char4,
-              ext_num         TYPE char30,
-              cust_owner      TYPE char10,
-              date_from       TYPE dats,
-              date_to         TYPE dats,
+              contract_number    TYPE char10, "For change
+              currency           TYPE waers, "Change: Contract Currency
+              contract_type      TYPE char4,
+              process_variant    TYPE char4,
+              ext_num            TYPE char30,
+              cust_owner         TYPE char10,
+              date_from          TYPE dats,
+              date_to            TYPE dats,
+              vkorg              TYPE char4,
+              vtweg              TYPE char2,
+              spart              TYPE char2,
+              zterm              TYPE char4,
+              settl_cal_accr     TYPE char2,
+              assignment         TYPE char16,
+              settl_cal_part     TYPE char2,
+              settl_cal_delta    TYPE char2,
+              cc_curr            TYPE waers,
+              exchange_rate      TYPE char9,
+              exchange_rate_type TYPE char4,
+              " Business Volume Block fields
+              order_key          TYPE char10,
+              fieldcomb          TYPE char4,
+              incl_excl          TYPE char1,
+              kunnr              TYPE char10,
+              matnr              TYPE char40,
+              vkorg_bvb          TYPE char4,
+              augru              TYPE char3,
+              kunhier            TYPE char10,
+              prodh              TYPE char18,
+              mvgr1              TYPE char3,
+              mvgr2              TYPE char3,
+              mvgr3              TYPE char3,
+              mvgr4              TYPE char3,
+              mvgr5              TYPE char3,
+              kvgr1              TYPE char3,
+              kvgr2              TYPE char3,
+              kvgr3              TYPE char3,
+              kvgr4              TYPE char3,
+              kvgr5              TYPE char3,
+              prodh1             TYPE char2,
+              prodh2             TYPE char2,
+              prodh3             TYPE char3,
+              zzprodh4           TYPE char3,
+              zzprodh5           TYPE char3,
+              zzprodh6           TYPE char2,
+              zzprodh7           TYPE char3,
+              vtweg_bvb          TYPE char2,
+              werks              TYPE char4,
+              spart_bvb          TYPE char2,
+              kunrg              TYPE char10,
             END OF lty_condition_data,
             BEGIN OF lty_message,
-              row_number      TYPE i,
-              contract_type   TYPE char4,
-              process_variant TYPE char4,
-              ext_num         TYPE char30,
-              cust_owner      TYPE char10,
-              date_from       TYPE dats,
-              date_to         TYPE dats,
-              contract_number TYPE char10,
-              type            TYPE symsgty,
-              message         TYPE string,
-              validation_step TYPE string,
+              row_number         TYPE i,
+              contract_type      TYPE char4,
+              process_variant    TYPE char4,
+              ext_num            TYPE char30,
+              cust_owner         TYPE char10,
+              date_from          TYPE dats,
+              date_to            TYPE dats,
+              contract_number    TYPE char10,
+              order_key          TYPE char10,
+              currency           TYPE waers,
+              type               TYPE symsgty,
+              message            TYPE string,
+              validation_step    TYPE string,
             END OF lty_message,
             BEGIN OF lty_validation_result,
-              valid           TYPE abap_bool,
-              error_message   TYPE string,
-              validation_step TYPE string,
+              valid              TYPE abap_bool,
+              error_message      TYPE string,
+              validation_step    TYPE string,
             END OF lty_validation_result.
 
     CLASS-METHODS get_instance
@@ -161,7 +205,28 @@ CLASS lcl_condition_contract DEFINITION FINAL CREATE PRIVATE.
         IMPORTING
           iv_excel_date      TYPE any
         RETURNING
-          VALUE(rv_sap_date) TYPE dats.
+          VALUE(rv_sap_date) TYPE dats,
+
+      validate_customer
+        IMPORTING
+          is_data          TYPE lty_condition_data
+        RETURNING
+          VALUE(rs_result) TYPE lty_validation_result,
+
+      validate_data_enhanced
+        IMPORTING
+          is_data          TYPE lty_condition_data
+          iv_row_number    TYPE i
+        RETURNING
+          VALUE(rs_result) TYPE lty_validation_result,
+
+      call_bapi_create_group
+        IMPORTING
+          is_header          TYPE lty_condition_data
+          it_bvb_rows        TYPE STANDARD TABLE
+          iv_header_row      TYPE i
+        RETURNING
+          VALUE(rs_result)   TYPE lty_message.
 
 ENDCLASS.
 
@@ -296,12 +361,24 @@ CLASS lcl_condition_contract IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD format_customer.
-    DATA lv_customer TYPE kna1-kunnr.
-    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
-      EXPORTING input  = iv_customer
-      IMPORTING output = lv_customer.
-    rv_kunnr = lv_customer.
+  METHOD validate_customer.
+    rs_result-valid = abap_true.
+    rs_result-validation_step = 'CUSTOMER_VALIDATION'.
+
+    DATA: lv_customer TYPE kna1-kunnr.
+
+    IF is_data-cust_owner IS NOT INITIAL.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING input  = is_data-cust_owner
+        IMPORTING output = lv_customer.
+
+      SELECT SINGLE kunnr FROM kna1 INTO lv_customer WHERE kunnr = lv_customer.
+      IF sy-subrc <> 0.
+        rs_result-valid = abap_false.
+        rs_result-error_message = |Customer { is_data-cust_owner } does not exist in system|.
+        RETURN.
+      ENDIF.
+    ENDIF.
   ENDMETHOD.
 
   METHOD validate_data_create.
