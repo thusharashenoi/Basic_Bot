@@ -361,6 +361,14 @@ CLASS lcl_condition_contract IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
+  METHOD format_customer.
+    DATA lv_customer TYPE kna1-kunnr.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING input  = iv_customer
+      IMPORTING output = lv_customer.
+    rv_kunnr = lv_customer.
+  ENDMETHOD.
+
   METHOD validate_customer.
     rs_result-valid = abap_true.
     rs_result-validation_step = 'CUSTOMER_VALIDATION'.
@@ -381,7 +389,7 @@ CLASS lcl_condition_contract IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
-  METHOD validate_data_create.
+  METHOD validate_data_enhanced.
     DATA ls_result TYPE lty_validation_result.
 
     ls_result = validate_mandatory_fields( is_data ).
@@ -391,6 +399,12 @@ CLASS lcl_condition_contract IMPLEMENTATION.
     ENDIF.
 
     ls_result = validate_dates( is_data ).
+    IF ls_result-valid = abap_false.
+      rs_result = ls_result.
+      RETURN.
+    ENDIF.
+
+    ls_result = validate_customer( is_data ).
     IF ls_result-valid = abap_false.
       rs_result = ls_result.
       RETURN.
@@ -421,6 +435,12 @@ CLASS lcl_condition_contract IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD call_bapi_create.
+    DATA lt_bvb TYPE STANDARD TABLE OF lty_condition_data WITH EMPTY KEY.
+    APPEND is_data TO lt_bvb.
+    rs_result = call_bapi_create_group( is_header = is_data it_bvb_rows = lt_bvb iv_header_row = iv_row_number ).
+  ENDMETHOD.
+
+  METHOD call_bapi_create_group.
     DATA: ls_headdatain         TYPE bapicchead,
           ls_headdatainx        TYPE bapiccheadx,
           lv_contract_number    TYPE bapicckey-condition_contract_number,
@@ -431,41 +451,133 @@ CLASS lcl_condition_contract IMPLEMENTATION.
           lv_all_messages       TYPE string,
           lv_separator          TYPE string VALUE '; '.
 
-    rs_result-row_number      = iv_row_number.
-    rs_result-contract_type   = is_data-contract_type.
-    rs_result-process_variant = is_data-process_variant.
-    rs_result-ext_num         = is_data-ext_num.
-    rs_result-cust_owner      = is_data-cust_owner.
-    rs_result-date_from       = is_data-date_from.
-    rs_result-date_to         = is_data-date_to.
+    CLEAR rs_result.
+    rs_result-row_number      = iv_header_row.
+    rs_result-contract_type   = is_header-contract_type.
+    rs_result-process_variant = is_header-process_variant.
+    rs_result-ext_num         = is_header-ext_num.
+    rs_result-cust_owner      = is_header-cust_owner.
+    rs_result-date_from       = is_header-date_from.
+    rs_result-date_to         = is_header-date_to.
 
-    lv_customer_formatted = format_customer( is_data-cust_owner ).
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING input  = is_header-cust_owner
+      IMPORTING output = lv_customer_formatted.
 
     DATA: lt_bapiccbvb  TYPE TABLE OF bapiccbvb,
           lt_bapiccbvbx TYPE TABLE OF bapiccbvbx,
           ls_bapiccbvb  TYPE bapiccbvb,
           ls_bapiccbvbx TYPE bapiccbvbx.
 
-    ls_bapiccbvb-order_key        = '1'.
-    ls_bapiccbvb-include_exclude  = 'I'.
-    ls_bapiccbvb-fieldcombination = '0001'.
-    ls_bapiccbvb-customer_new     = lv_customer_formatted.
-    ls_bapiccbvb-customer_key     = '1'.
-    APPEND ls_bapiccbvb TO lt_bapiccbvb.
+    DATA(lv_idx) = 0.
+    LOOP AT it_bvb_rows ASSIGNING FIELD-SYMBOL(<ls_bvb_row>).
+      CLEAR: ls_bapiccbvb, ls_bapiccbvbx.
+      ADD 1 TO lv_idx.
+      DATA(lv_key) = COND char10( WHEN <ls_bvb_row>-order_key IS NOT INITIAL THEN <ls_bvb_row>-order_key ELSE |{ lv_idx }| ).
 
-    ls_bapiccbvbx-order_key  = '1'.
-    ls_bapiccbvbx-updateflag = 'U'.
-    APPEND ls_bapiccbvbx TO lt_bapiccbvbx.
+      ls_bapiccbvb-order_key        = lv_key.
+      ls_bapiccbvb-include_exclude  = COND #( WHEN <ls_bvb_row>-incl_excl IS NOT INITIAL THEN <ls_bvb_row>-incl_excl ELSE 'I' ).
+      IF <ls_bvb_row>-fieldcomb IS NOT INITIAL.
+        ls_bapiccbvb-fieldcombination = <ls_bvb_row>-fieldcomb.
+      ENDIF.
 
-    ls_headdatain-contract_type       = is_data-contract_type.
-    ls_headdatain-process_variant     = is_data-process_variant.
+      IF <ls_bvb_row>-kunnr IS NOT INITIAL.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING input  = <ls_bvb_row>-kunnr
+          IMPORTING output = ls_bapiccbvb-customer_new.
+        ls_bapiccbvb-customer_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-matnr IS NOT INITIAL.
+        ls_bapiccbvb-material_new = <ls_bvb_row>-matnr.
+        ls_bapiccbvb-material_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-vkorg_bvb IS NOT INITIAL.
+        ls_bapiccbvb-salesorg_new = <ls_bvb_row>-vkorg_bvb.
+        ls_bapiccbvb-salesorg_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-augru IS NOT INITIAL.
+        ls_bapiccbvb-ord_reason_new = <ls_bvb_row>-augru.
+        ls_bapiccbvb-ord_reason_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-kunhier IS NOT INITIAL.
+        ls_bapiccbvb-cust_hier_new = <ls_bvb_row>-kunhier.
+        ls_bapiccbvb-cust_hier_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-prodh IS NOT INITIAL.
+        ls_bapiccbvb-prod_hier_new = <ls_bvb_row>-prodh.
+        ls_bapiccbvb-prod_hier_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-kvgr1 IS NOT INITIAL.
+        ls_bapiccbvb-cust_grp1_new = <ls_bvb_row>-kvgr1.
+        ls_bapiccbvb-cust_grp1_key = lv_key.
+      ENDIF.
+      IF <ls_bvb_row>-kvgr2 IS NOT INITIAL.
+        ls_bapiccbvb-cust_grp2_new = <ls_bvb_row>-kvgr2.
+        ls_bapiccbvb-cust_grp2_key = lv_key.
+      ENDIF.
+      IF <ls_bvb_row>-kvgr3 IS NOT INITIAL.
+        ls_bapiccbvb-cust_grp3_new = <ls_bvb_row>-kvgr3.
+        ls_bapiccbvb-cust_grp3_key = lv_key.
+      ENDIF.
+      IF <ls_bvb_row>-kvgr4 IS NOT INITIAL.
+        ls_bapiccbvb-cust_grp4_new = <ls_bvb_row>-kvgr4.
+        ls_bapiccbvb-cust_grp4_key = lv_key.
+      ENDIF.
+      IF <ls_bvb_row>-kvgr5 IS NOT INITIAL.
+        ls_bapiccbvb-cust_grp5_new = <ls_bvb_row>-kvgr5.
+        ls_bapiccbvb-cust_grp5_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-vtweg_bvb IS NOT INITIAL.
+        ls_bapiccbvb-distr_chan_new = <ls_bvb_row>-vtweg_bvb.
+        ls_bapiccbvb-distr_chan_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-werks IS NOT INITIAL.
+        ls_bapiccbvb-plant_new = <ls_bvb_row>-werks.
+        ls_bapiccbvb-plant_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-spart_bvb IS NOT INITIAL.
+        ls_bapiccbvb-division_new = <ls_bvb_row>-spart_bvb.
+        ls_bapiccbvb-division_key = lv_key.
+      ENDIF.
+
+      IF <ls_bvb_row>-kunrg IS NOT INITIAL.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING input  = <ls_bvb_row>-kunrg
+          IMPORTING output = ls_bapiccbvb-payer_new.
+        ls_bapiccbvb-payer_key = lv_key.
+      ENDIF.
+
+      APPEND ls_bapiccbvb TO lt_bapiccbvb.
+
+      ls_bapiccbvbx-order_key  = lv_key.
+      ls_bapiccbvbx-updateflag = 'U'.
+      APPEND ls_bapiccbvbx TO lt_bapiccbvbx.
+    ENDLOOP.
+
+    ls_headdatain-contract_type       = is_header-contract_type.
+    ls_headdatain-process_variant     = is_header-process_variant.
     ls_headdatain-customer_owner      = lv_customer_formatted.
-    ls_headdatain-validity_date_from  = is_data-date_from.
-    ls_headdatain-validity_date_to    = is_data-date_to.
-    " Example organizational data – adjust as needed or load from config
-    ls_headdatain-salesorg            = 'EG01'.
-    ls_headdatain-distr_chan          = '01'.
-    ls_headdatain-division            = '01'.
+    ls_headdatain-validity_date_from  = is_header-date_from.
+    ls_headdatain-validity_date_to    = is_header-date_to.
+    ls_headdatain-salesorg            = is_header-vkorg.
+    ls_headdatain-distr_chan          = is_header-vtweg.
+    ls_headdatain-division            = is_header-spart.
+
+    IF is_header-exchange_rate IS NOT INITIAL.
+      ls_headdatain-exch_rate = is_header-exchange_rate.
+    ENDIF.
+    IF is_header-exchange_rate_type IS NOT INITIAL.
+      ls_headdatain-exchg_rate = is_header-exchange_rate_type.
+    ENDIF.
 
     ls_headdatainx-contract_type       = 'X'.
     ls_headdatainx-process_variant     = 'X'.
@@ -475,6 +587,19 @@ CLASS lcl_condition_contract IMPLEMENTATION.
     ls_headdatainx-salesorg            = 'X'.
     ls_headdatainx-distr_chan          = 'X'.
     ls_headdatainx-division            = 'X'.
+
+    IF is_header-zterm IS NOT INITIAL.
+      ls_headdatainx-pmnttrms = 'X'.
+    ENDIF.
+    IF is_header-assignment IS NOT INITIAL.
+      ls_headdatainx-assignment = 'X'.
+    ENDIF.
+    IF is_header-exchange_rate IS NOT INITIAL.
+      ls_headdatainx-exch_rate = 'X'.
+    ENDIF.
+    IF is_header-exchange_rate_type IS NOT INITIAL.
+      ls_headdatainx-exchg_rate = 'X'.
+    ENDIF.
 
     CALL FUNCTION 'BAPI_CONDITION_CONTRACT_CREATE'
       EXPORTING
@@ -561,29 +686,26 @@ CLASS lcl_condition_contract IMPLEMENTATION.
         rs_result-validation_step = 'BAPI_WARNING'.
         rs_result-message         = |Contract { lv_contract_number } created with warnings: { lv_all_messages }|.
       ENDIF.
+
+      IF p_test IS INITIAL.
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING wait = 'X'
+          IMPORTING return = ls_commit_return.
+        IF ls_commit_return-type = gc_error OR ls_commit_return-type = gc_abort.
+          rs_result-type = gc_error.
+          rs_result-validation_step = 'COMMIT_ERROR'.
+          rs_result-message = |Contract created but commit failed: { ls_commit_return-message }|.
+        ENDIF.
+      ELSE.
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+        rs_result-validation_step = 'TEST_MODE'.
+        rs_result-message = |Test Mode: Contract { lv_contract_number } would be created (rolled back)|.
+      ENDIF.
     ELSE.
       rs_result-type = gc_error.
       rs_result-validation_step = 'BAPI_NO_CONTRACT'.
       rs_result-message = 'BAPI call completed but no contract number was generated'.
       RETURN.
-    ENDIF.
-
-    IF p_test IS INITIAL AND rs_result-type = gc_success.
-      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-        EXPORTING
-          wait   = 'X'
-        IMPORTING
-          return = ls_commit_return.
-
-      IF ls_commit_return-type = gc_error OR ls_commit_return-type = gc_abort.
-        rs_result-type = gc_error.
-        rs_result-validation_step = 'COMMIT_ERROR'.
-        rs_result-message = |Contract created but commit failed: { ls_commit_return-message }|.
-      ENDIF.
-    ELSEIF p_test IS NOT INITIAL AND rs_result-type = gc_success.
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-      rs_result-validation_step = 'TEST_MODE'.
-      rs_result-message = |Test Mode: Contract { lv_contract_number } would be created (rolled back)|.
     ENDIF.
   ENDMETHOD.
 
@@ -827,76 +949,161 @@ CLASS lcl_condition_contract IMPLEMENTATION.
         row_number = 0
         type = gc_error
         validation_step = 'NO_DATA'
-        message = 'No data found to process. Please check your Excel file.'
-      ).
+        message = 'No data found to process. Please check your Excel file.' ).
       APPEND ls_no_data_message TO gt_message.
       ADD 1 TO gv_error_count.
       RETURN.
     ENDIF.
 
-    LOOP AT gt_condition_data ASSIGNING FIELD-SYMBOL(<ls_data>).
+    FIELD-SYMBOLS: <fs_header> TYPE lty_condition_data.
+    DATA: ls_header     TYPE lty_condition_data,
+          lt_bvb_group  TYPE STANDARD TABLE OF lty_condition_data WITH EMPTY KEY.
+    DATA lv_has_header TYPE abap_bool VALUE abap_false.
+    DATA lv_header_row TYPE i VALUE 0.
+
+    LOOP AT gt_condition_data ASSIGNING FIELD-SYMBOL(<ls_row>).
       ADD 1 TO lv_row_number.
 
-      TRY.
-          ls_validation_result = validate_data_create( is_data = <ls_data> iv_row_number = lv_row_number ).
-          IF ls_validation_result-valid = abap_false.
-            DATA(ls_error_message) = VALUE lty_message(
-              row_number = lv_row_number
-              contract_type = <ls_data>-contract_type
-              process_variant = <ls_data>-process_variant
-              ext_num = <ls_data>-ext_num
-              cust_owner = <ls_data>-cust_owner
-              date_from = <ls_data>-date_from
-              date_to = <ls_data>-date_to
-              type = gc_error
-              validation_step = ls_validation_result-validation_step
-              message = ls_validation_result-error_message
-            ).
-            APPEND ls_error_message TO gt_message.
-            ADD 1 TO gv_error_count.
-          ELSE.
-            TRY.
-                DATA(ls_bapi_result) = call_bapi_create( is_data = <ls_data> iv_row_number = lv_row_number ).
-                APPEND ls_bapi_result TO gt_message.
-                IF ls_bapi_result-type = gc_success.
+      DATA(lv_is_header_row) = xsdbool( <ls_row>-contract_type IS NOT INITIAL OR
+                                        <ls_row>-process_variant IS NOT INITIAL OR
+                                        <ls_row>-cust_owner IS NOT INITIAL OR
+                                        <ls_row>-date_from IS NOT INITIAL OR
+                                        <ls_row>-date_to   IS NOT INITIAL OR
+                                        <ls_row>-vkorg     IS NOT INITIAL OR
+                                        <ls_row>-vtweg     IS NOT INITIAL OR
+                                        <ls_row>-spart     IS NOT INITIAL ).
+
+      IF lv_is_header_row = abap_true.
+        IF lv_has_header = abap_true.
+          TRY.
+              ls_validation_result = validate_data_enhanced( is_data = ls_header iv_row_number = lv_header_row ).
+              IF ls_validation_result-valid = abap_false.
+                DATA(ls_err_hdr) = VALUE lty_message(
+                  row_number = lv_header_row
+                  contract_type = ls_header-contract_type
+                  process_variant = ls_header-process_variant
+                  ext_num = ls_header-ext_num
+                  cust_owner = ls_header-cust_owner
+                  date_from = ls_header-date_from
+                  date_to = ls_header-date_to
+                  type = gc_error
+                  validation_step = ls_validation_result-validation_step
+                  message = ls_validation_result-error_message ).
+                APPEND ls_err_hdr TO gt_message.
+                ADD 1 TO gv_error_count.
+              ELSE.
+                DATA(ls_group_result) = call_bapi_create_group( is_header = ls_header it_bvb_rows = lt_bvb_group iv_header_row = lv_header_row ).
+                APPEND ls_group_result TO gt_message.
+                IF ls_group_result-type = gc_success.
                   ADD 1 TO gv_success_count.
                 ELSE.
                   ADD 1 TO gv_error_count.
                 ENDIF.
-              CATCH cx_root INTO DATA(lo_bapi_exception).
-                DATA(ls_bapi_error) = VALUE lty_message(
-                  row_number = lv_row_number
-                  contract_type = <ls_data>-contract_type
-                  process_variant = <ls_data>-process_variant
-                  ext_num = <ls_data>-ext_num
-                  cust_owner = <ls_data>-cust_owner
-                  date_from = <ls_data>-date_from
-                  date_to = <ls_data>-date_to
-                  type = gc_error
-                  validation_step = 'BAPI_EXCEPTION'
-                  message = |BAPI Exception: { lo_bapi_exception->get_text( ) }|
-                ).
-                APPEND ls_bapi_error TO gt_message.
-                ADD 1 TO gv_error_count.
-            ENDTRY.
+              ENDIF.
+            CATCH cx_root INTO DATA(lo_grp_ex).
+              DATA(ls_grp_err) = VALUE lty_message(
+                row_number = lv_header_row
+                contract_type = ls_header-contract_type
+                process_variant = ls_header-process_variant
+                ext_num = ls_header-ext_num
+                cust_owner = ls_header-cust_owner
+                date_from = ls_header-date_from
+                date_to = ls_header-date_to
+                type = gc_error
+                validation_step = 'GROUP_EXCEPTION'
+                message = |Group Processing Exception: { lo_grp_ex->get_text( ) }| ).
+              APPEND ls_grp_err TO gt_message.
+              ADD 1 TO gv_error_count.
+          ENDTRY.
+        ENDIF.
+
+        CLEAR ls_header.
+        ls_header-contract_type   = <ls_row>-contract_type.
+        ls_header-process_variant = <ls_row>-process_variant.
+        ls_header-ext_num         = <ls_row>-ext_num.
+        ls_header-cust_owner      = <ls_row>-cust_owner.
+        ls_header-date_from       = <ls_row>-date_from.
+        ls_header-date_to         = <ls_row>-date_to.
+        ls_header-vkorg           = <ls_row>-vkorg.
+        ls_header-vtweg           = <ls_row>-vtweg.
+        ls_header-spart           = <ls_row>-spart.
+        ls_header-zterm           = <ls_row>-zterm.
+        ls_header-settl_cal_accr  = <ls_row>-settl_cal_accr.
+        ls_header-assignment      = <ls_row>-assignment.
+        ls_header-settl_cal_part  = <ls_row>-settl_cal_part.
+        ls_header-settl_cal_delta = <ls_row>-settl_cal_delta.
+        ls_header-cc_curr         = <ls_row>-cc_curr.
+        ls_header-exchange_rate   = <ls_row>-exchange_rate.
+        ls_header-exchange_rate_type = <ls_row>-exchange_rate_type.
+
+        lv_has_header = abap_true.
+        lv_header_row = lv_row_number.
+        ASSIGN ls_header TO <fs_header>.
+
+        CLEAR lt_bvb_group.
+        IF <ls_row>-order_key IS NOT INITIAL OR <ls_row>-matnr IS NOT INITIAL OR <ls_row>-kunnr IS NOT INITIAL.
+          APPEND <ls_row> TO lt_bvb_group.
+        ENDIF.
+
+      ELSE.
+        IF lv_has_header = abap_true.
+          IF <ls_row>-order_key IS NOT INITIAL OR <ls_row>-matnr IS NOT INITIAL OR <ls_row>-kunnr IS NOT INITIAL.
+            APPEND <ls_row> TO lt_bvb_group.
           ENDIF.
-        CATCH cx_root INTO DATA(lo_general_exception).
-          DATA(ls_general_error) = VALUE lty_message(
+        ELSE.
+          DATA(ls_orphan) = VALUE lty_message(
             row_number = lv_row_number
-            contract_type = <ls_data>-contract_type
-            process_variant = <ls_data>-process_variant
-            ext_num = <ls_data>-ext_num
-            cust_owner = <ls_data>-cust_owner
-            date_from = <ls_data>-date_from
-            date_to = <ls_data>-date_to
             type = gc_error
-            validation_step = 'PROCESSING_EXCEPTION'
-            message = |Processing Exception: { lo_general_exception->get_text( ) }|
-          ).
-          APPEND ls_general_error TO gt_message.
+            validation_step = 'ORPHAN_BVB'
+            message = 'BVB row encountered before any header row.' ).
+          APPEND ls_orphan TO gt_message.
+          ADD 1 TO gv_error_count.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_has_header = abap_true.
+      TRY.
+          ls_validation_result = validate_data_enhanced( is_data = ls_header iv_row_number = lv_header_row ).
+          IF ls_validation_result-valid = abap_false.
+            DATA(ls_err_hdr_last) = VALUE lty_message(
+              row_number = lv_header_row
+              contract_type = ls_header-contract_type
+              process_variant = ls_header-process_variant
+              ext_num = ls_header-ext_num
+              cust_owner = ls_header-cust_owner
+              date_from = ls_header-date_from
+              date_to = ls_header-date_to
+              type = gc_error
+              validation_step = ls_validation_result-validation_step
+              message = ls_validation_result-error_message ).
+            APPEND ls_err_hdr_last TO gt_message.
+            ADD 1 TO gv_error_count.
+          ELSE.
+            DATA(ls_group_result_last) = call_bapi_create_group( is_header = ls_header it_bvb_rows = lt_bvb_group iv_header_row = lv_header_row ).
+            APPEND ls_group_result_last TO gt_message.
+            IF ls_group_result_last-type = gc_success.
+              ADD 1 TO gv_success_count.
+            ELSE.
+              ADD 1 TO gv_error_count.
+            ENDIF.
+          ENDIF.
+        CATCH cx_root INTO DATA(lo_grp_ex_last).
+          DATA(ls_grp_err_last) = VALUE lty_message(
+            row_number = lv_header_row
+            contract_type = ls_header-contract_type
+            process_variant = ls_header-process_variant
+            ext_num = ls_header-ext_num
+            cust_owner = ls_header-cust_owner
+            date_from = ls_header-date_from
+            date_to = ls_header-date_to
+            type = gc_error
+            validation_step = 'GROUP_EXCEPTION'
+            message = |Group Processing Exception: { lo_grp_ex_last->get_text( ) }| ).
+          APPEND ls_grp_err_last TO gt_message.
           ADD 1 TO gv_error_count.
       ENDTRY.
-    ENDLOOP.
+    ENDIF.
 
     IF gv_error_count = 0.
       MESSAGE |Processing completed successfully: { gv_success_count } contracts created| TYPE 'S'.
@@ -1016,25 +1223,7 @@ CLASS lcl_condition_contract IMPLEMENTATION.
         CHANGING
           data_tab                = lt_data_tab
         EXCEPTIONS
-          file_open_error         = 1
-          file_read_error         = 2
-          no_batch                = 3
-          gui_refuse_filetransfer = 4
-          invalid_type            = 5
-          no_authority            = 6
-          unknown_error           = 7
-          bad_data_format         = 8
-          header_not_allowed      = 9
-          separator_not_allowed   = 10
-          header_too_long         = 11
-          unknown_dp_error        = 12
-          access_denied           = 13
-          dp_out_of_memory        = 14
-          disk_full               = 15
-          dp_timeout              = 16
-          not_supported_by_gui    = 17
-          error_no_gui            = 18
-          OTHERS                  = 19 ).
+          OTHERS                  = 1 ).
 
       IF sy-subrc <> 0.
         MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
@@ -1048,8 +1237,7 @@ CLASS lcl_condition_contract IMPLEMENTATION.
               it_solix   = lt_data_tab
               iv_size    = lv_filelength
             RECEIVING
-              ev_xstring = DATA(lv_xstring)
-          ).
+              ev_xstring = DATA(lv_xstring) ).
 
           DATA(lo_excel) = NEW cl_fdt_xl_spreadsheet(
                                document_name = CONV #( p_file )
@@ -1074,52 +1262,96 @@ CLASS lcl_condition_contract IMPLEMENTATION.
           ENDIF.
 
           DATA(lv_data_rows) = 0.
-          LOOP AT <lfs_data_tab> ASSIGNING FIELD-SYMBOL(<lfs_data>).
-            IF sy-tabix EQ 1.
-              CONTINUE. " skip header row
-            ENDIF.
-
-            APPEND INITIAL LINE TO gt_condition_data ASSIGNING FIELD-SYMBOL(<lfs_condition_data>).
-
-            DATA(lv_fields_expected) = COND i( WHEN p_change IS INITIAL THEN 6 ELSE 8 ).
-
-            DO lv_fields_expected TIMES.
-              ASSIGN COMPONENT sy-index OF STRUCTURE <lfs_data> TO FIELD-SYMBOL(<lfs_value>).
-              IF <lfs_value> IS ASSIGNED.
-                IF p_change IS INITIAL.
+          IF p_change IS INITIAL.
+            " CREATE: map header and BVB fields as per template
+            LOOP AT <lfs_data_tab> ASSIGNING FIELD-SYMBOL(<lfs_data_row>).
+              IF sy-tabix = 1. CONTINUE. ENDIF.
+              APPEND INITIAL LINE TO gt_condition_data ASSIGNING FIELD-SYMBOL(<lfs_condition_data>).
+              DO 47 TIMES.
+                ASSIGN COMPONENT sy-index OF STRUCTURE <lfs_data_row> TO FIELD-SYMBOL(<lfs_value>).
+                IF <lfs_value> IS ASSIGNED.
                   CASE sy-index.
-                    WHEN 1. <lfs_condition_data>-contract_type   = <lfs_value>.
-                    WHEN 2. <lfs_condition_data>-process_variant = <lfs_value>.
-                    WHEN 3. <lfs_condition_data>-ext_num         = <lfs_value>.
-                    WHEN 4. <lfs_condition_data>-cust_owner      = <lfs_value>.
-                    WHEN 5. <lfs_condition_data>-date_from       = convert_excel_date( <lfs_value> ).
-                    WHEN 6. <lfs_condition_data>-date_to         = convert_excel_date( <lfs_value> ).
-                  ENDCASE.
-                ELSE.
-                  CASE sy-index.
-                    WHEN 1. <lfs_condition_data>-contract_number = <lfs_value>.
-                    WHEN 2. <lfs_condition_data>-currency        = <lfs_value>.
-                    WHEN 3. <lfs_condition_data>-contract_type   = <lfs_value>.
-                    WHEN 4. <lfs_condition_data>-process_variant = <lfs_value>.
-                    WHEN 5. <lfs_condition_data>-ext_num         = <lfs_value>.
-                    WHEN 6. <lfs_condition_data>-cust_owner      = <lfs_value>.
-                    WHEN 7. <lfs_condition_data>-date_from       = convert_excel_date( <lfs_value> ).
-                    WHEN 8. <lfs_condition_data>-date_to         = convert_excel_date( <lfs_value> ).
+                    WHEN 1.  <lfs_condition_data>-contract_type      = <lfs_value>.
+                    WHEN 2.  <lfs_condition_data>-process_variant    = <lfs_value>.
+                    WHEN 3.  <lfs_condition_data>-ext_num            = <lfs_value>.
+                    WHEN 4.  <lfs_condition_data>-cust_owner         = <lfs_value>.
+                    WHEN 5.  <lfs_condition_data>-date_from          = convert_excel_date( <lfs_value> ).
+                    WHEN 6.  <lfs_condition_data>-date_to            = convert_excel_date( <lfs_value> ).
+                    WHEN 7.  <lfs_condition_data>-vkorg              = <lfs_value>.
+                    WHEN 8.  <lfs_condition_data>-vtweg              = <lfs_value>.
+                    WHEN 9.  <lfs_condition_data>-spart              = <lfs_value>.
+                    WHEN 10. <lfs_condition_data>-zterm              = <lfs_value>.
+                    WHEN 11. <lfs_condition_data>-settl_cal_accr     = <lfs_value>.
+                    WHEN 12. <lfs_condition_data>-assignment         = <lfs_value>.
+                    WHEN 13. <lfs_condition_data>-settl_cal_part     = <lfs_value>.
+                    WHEN 14. <lfs_condition_data>-settl_cal_delta    = <lfs_value>.
+                    WHEN 15. <lfs_condition_data>-cc_curr            = <lfs_value>.
+                    WHEN 16. <lfs_condition_data>-exchange_rate      = <lfs_value>.
+                    WHEN 17. <lfs_condition_data>-exchange_rate_type = <lfs_value>.
+                    WHEN 18. <lfs_condition_data>-order_key          = <lfs_value>.
+                    WHEN 19. <lfs_condition_data>-fieldcomb          = <lfs_value>.
+                    WHEN 20. <lfs_condition_data>-incl_excl          = <lfs_value>.
+                    WHEN 21. <lfs_condition_data>-kunnr              = <lfs_value>.
+                    WHEN 22. <lfs_condition_data>-matnr              = <lfs_value>.
+                    WHEN 23. <lfs_condition_data>-vkorg_bvb          = <lfs_value>.
+                    WHEN 24. <lfs_condition_data>-augru              = <lfs_value>.
+                    WHEN 25. <lfs_condition_data>-kunhier            = <lfs_value>.
+                    WHEN 26. <lfs_condition_data>-prodh              = <lfs_value>.
+                    WHEN 27. <lfs_condition_data>-mvgr1              = <lfs_value>.
+                    WHEN 28. <lfs_condition_data>-mvgr2              = <lfs_value>.
+                    WHEN 29. <lfs_condition_data>-mvgr3              = <lfs_value>.
+                    WHEN 30. <lfs_condition_data>-mvgr4              = <lfs_value>.
+                    WHEN 31. <lfs_condition_data>-mvgr5              = <lfs_value>.
+                    WHEN 32. <lfs_condition_data>-kvgr1              = <lfs_value>.
+                    WHEN 33. <lfs_condition_data>-kvgr2              = <lfs_value>.
+                    WHEN 34. <lfs_condition_data>-kvgr3              = <lfs_value>.
+                    WHEN 35. <lfs_condition_data>-kvgr4              = <lfs_value>.
+                    WHEN 36. <lfs_condition_data>-kvgr5              = <lfs_value>.
+                    WHEN 37. <lfs_condition_data>-prodh1             = <lfs_value>.
+                    WHEN 38. <lfs_condition_data>-prodh2             = <lfs_value>.
+                    WHEN 39. <lfs_condition_data>-prodh3             = <lfs_value>.
+                    WHEN 40. <lfs_condition_data>-zzprodh4           = <lfs_value>.
+                    WHEN 41. <lfs_condition_data>-zzprodh5           = <lfs_value>.
+                    WHEN 42. <lfs_condition_data>-zzprodh6           = <lfs_value>.
+                    WHEN 43. <lfs_condition_data>-zzprodh7           = <lfs_value>.
+                    WHEN 44. <lfs_condition_data>-vtweg_bvb          = <lfs_value>.
+                    WHEN 45. <lfs_condition_data>-werks              = <lfs_value>.
+                    WHEN 46. <lfs_condition_data>-spart_bvb          = <lfs_value>.
+                    WHEN 47. <lfs_condition_data>-kunrg              = <lfs_value>.
                   ENDCASE.
                 ENDIF.
-              ENDIF.
-              UNASSIGN <lfs_value>.
-            ENDDO.
-
-            ADD 1 TO lv_data_rows.
-          ENDLOOP.
+              ENDDO.
+              ADD 1 TO lv_data_rows.
+            ENDLOOP.
+          ELSE.
+            LOOP AT <lfs_data_tab> ASSIGNING FIELD-SYMBOL(<lfs_data_row_c>).
+              IF sy-tabix = 1. CONTINUE. ENDIF.
+              APPEND INITIAL LINE TO gt_condition_data ASSIGNING FIELD-SYMBOL(<lfs_condition_data_c>).
+              DO 8 TIMES.
+                ASSIGN COMPONENT sy-index OF STRUCTURE <lfs_data_row_c> TO FIELD-SYMBOL(<lfs_value_c>).
+                IF <lfs_value_c> IS ASSIGNED.
+                  CASE sy-index.
+                    WHEN 1. <lfs_condition_data_c>-contract_number = <lfs_value_c>.
+                    WHEN 2. <lfs_condition_data_c>-currency        = <lfs_value_c>.
+                    WHEN 3. <lfs_condition_data_c>-contract_type   = <lfs_value_c>.
+                    WHEN 4. <lfs_condition_data_c>-process_variant = <lfs_value_c>.
+                    WHEN 5. <lfs_condition_data_c>-ext_num         = <lfs_value_c>.
+                    WHEN 6. <lfs_condition_data_c>-cust_owner      = <lfs_value_c>.
+                    WHEN 7. <lfs_condition_data_c>-date_from       = convert_excel_date( <lfs_value_c> ).
+                    WHEN 8. <lfs_condition_data_c>-date_to         = convert_excel_date( <lfs_value_c> ).
+                  ENDCASE.
+                ENDIF.
+              ENDDO.
+              ADD 1 TO lv_data_rows.
+            ENDLOOP.
+          ENDIF.
 
           IF lv_data_rows = 0.
             MESSAGE 'Excel file contains no data rows (only headers found).' TYPE 'I' DISPLAY LIKE 'E'.
             LEAVE LIST-PROCESSING.
           ENDIF.
 
-          MESSAGE |Successfully read { lines( gt_condition_data ) } records from Excel file| TYPE 'S'.
+          MESSAGE |Successfully read { lv_data_rows } records from Excel file| TYPE 'S'.
         ENDIF.
       ENDIF.
     ENDIF.
@@ -1534,8 +1766,246 @@ CLASS lcl_condition_contract IMPLEMENTATION.
             lo_column->set_short_text( 'To' ).
           CATCH cx_salv_not_found.
         ENDTRY.
-      CATCH cx_salv_not_found.
-    ENDTRY.
+        " BVB field headers
+        TRY.
+            lo_column ?= lo_columns->get_column( 'ORDER_KEY' ).
+            lo_column->set_long_text( 'Order Key' ).
+            lo_column->set_medium_text( 'Order Key' ).
+            lo_column->set_short_text( 'OrderKey' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'FIELDCOMB' ).
+            lo_column->set_long_text( 'Field Combination' ).
+            lo_column->set_medium_text( 'Field Comb' ).
+            lo_column->set_short_text( 'FldComb' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'INCL_EXCL' ).
+            lo_column->set_long_text( 'Include/Exclude (I/E)' ).
+            lo_column->set_medium_text( 'Incl/Excl' ).
+            lo_column->set_short_text( 'I/E' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'KUNNR' ).
+            lo_column->set_long_text( 'Customer' ).
+            lo_column->set_medium_text( 'Customer' ).
+            lo_column->set_short_text( 'Customer' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'MATNR' ).
+            lo_column->set_long_text( 'Material' ).
+            lo_column->set_medium_text( 'Material' ).
+            lo_column->set_short_text( 'Material' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'VKORG_BVB' ).
+            lo_column->set_long_text( 'Sales Org (BVB)' ).
+            lo_column->set_medium_text( 'Sales Org BVB' ).
+            lo_column->set_short_text( 'SalesOrg' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'AUGRU' ).
+            lo_column->set_long_text( 'Order Reason' ).
+            lo_column->set_medium_text( 'Order Reason' ).
+            lo_column->set_short_text( 'OrdRsn' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'KUNHIER' ).
+            lo_column->set_long_text( 'Customer Hierarchy' ).
+            lo_column->set_medium_text( 'Cust Hierarchy' ).
+            lo_column->set_short_text( 'CustHier' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'PRODH' ).
+            lo_column->set_long_text( 'Product Hierarchy' ).
+            lo_column->set_medium_text( 'Prod Hierarchy' ).
+            lo_column->set_short_text( 'ProdHier' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'MVGR1' ).
+            lo_column->set_long_text( 'Material Group 1' ).
+            lo_column->set_medium_text( 'Mat Group 1' ).
+            lo_column->set_short_text( 'MatGrp1' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'MVGR2' ).
+            lo_column->set_long_text( 'Material Group 2' ).
+            lo_column->set_medium_text( 'Mat Group 2' ).
+            lo_column->set_short_text( 'MatGrp2' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'MVGR3' ).
+            lo_column->set_long_text( 'Material Group 3' ).
+            lo_column->set_medium_text( 'Mat Group 3' ).
+            lo_column->set_short_text( 'MatGrp3' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'MVGR4' ).
+            lo_column->set_long_text( 'Material Group 4' ).
+            lo_column->set_medium_text( 'Mat Group 4' ).
+            lo_column->set_short_text( 'MatGrp4' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'MVGR5' ).
+            lo_column->set_long_text( 'Material Group 5' ).
+            lo_column->set_medium_text( 'Mat Group 5' ).
+            lo_column->set_short_text( 'MatGrp5' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'KVGR1' ).
+            lo_column->set_long_text( 'Customer Group 1' ).
+            lo_column->set_medium_text( 'Cust Group 1' ).
+            lo_column->set_short_text( 'CusGrp1' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'KVGR2' ).
+            lo_column->set_long_text( 'Customer Group 2' ).
+            lo_column->set_medium_text( 'Cust Group 2' ).
+            lo_column->set_short_text( 'CusGrp2' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'KVGR3' ).
+            lo_column->set_long_text( 'Customer Group 3' ).
+            lo_column->set_medium_text( 'Cust Group 3' ).
+            lo_column->set_short_text( 'CusGrp3' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'KVGR4' ).
+            lo_column->set_long_text( 'Customer Group 4' ).
+            lo_column->set_medium_text( 'Cust Group 4' ).
+            lo_column->set_short_text( 'CusGrp4' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'KVGR5' ).
+            lo_column->set_long_text( 'Customer Group 5' ).
+            lo_column->set_medium_text( 'Cust Group 5' ).
+            lo_column->set_short_text( 'CusGrp5' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'PRODH1' ).
+            lo_column->set_long_text( 'Product Line' ).
+            lo_column->set_medium_text( 'Product Line' ).
+            lo_column->set_short_text( 'ProdLin' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'PRODH2' ).
+            lo_column->set_long_text( 'Product Group' ).
+            lo_column->set_medium_text( 'Product Group' ).
+            lo_column->set_short_text( 'ProdGrp' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'PRODH3' ).
+            lo_column->set_long_text( 'Brand' ).
+            lo_column->set_medium_text( 'Brand' ).
+            lo_column->set_short_text( 'Brand' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'ZZPRODH4' ).
+            lo_column->set_long_text( 'Sub Brand' ).
+            lo_column->set_medium_text( 'Sub Brand' ).
+            lo_column->set_short_text( 'SubBrand' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'ZZPRODH5' ).
+            lo_column->set_long_text( 'Container Size' ).
+            lo_column->set_medium_text( 'Container Size' ).
+            lo_column->set_short_text( 'ContSize' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'ZZPRODH6' ).
+            lo_column->set_long_text( 'Count' ).
+            lo_column->set_medium_text( 'Count' ).
+            lo_column->set_short_text( 'Count' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'ZZPRODH7' ).
+            lo_column->set_long_text( 'Additional Product Info' ).
+            lo_column->set_medium_text( 'Add Prod Info' ).
+            lo_column->set_short_text( 'AddProd' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'VTWEG_BVB' ).
+            lo_column->set_long_text( 'Distribution Channel (BVB)' ).
+            lo_column->set_medium_text( 'Dist Chan BVB' ).
+            lo_column->set_short_text( 'DistChBV' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'WERKS' ).
+            lo_column->set_long_text( 'Plant' ).
+            lo_column->set_medium_text( 'Plant' ).
+            lo_column->set_short_text( 'Plant' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'SPART_BVB' ).
+            lo_column->set_long_text( 'Division (BVB)' ).
+            lo_column->set_medium_text( 'Division BVB' ).
+            lo_column->set_short_text( 'DivBVB' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
+
+        TRY.
+            lo_column ?= lo_columns->get_column( 'KUNRG' ).
+            lo_column->set_long_text( 'Payer' ).
+            lo_column->set_medium_text( 'Payer' ).
+            lo_column->set_short_text( 'Payer' ).
+          CATCH cx_salv_not_found.
+        ENDTRY.
   ENDMETHOD.
 
   METHOD has_data.
