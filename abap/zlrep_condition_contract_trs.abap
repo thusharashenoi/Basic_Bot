@@ -223,7 +223,7 @@ CLASS lcl_condition_contract DEFINITION FINAL CREATE PRIVATE.
       call_bapi_create_group
         IMPORTING
           is_header          TYPE lty_condition_data
-          it_bvb_rows        TYPE STANDARD TABLE
+          it_bvb_rows        TYPE STANDARD TABLE OF lty_condition_data
           iv_header_row      TYPE i
         RETURNING
           VALUE(rs_result)   TYPE lty_message.
