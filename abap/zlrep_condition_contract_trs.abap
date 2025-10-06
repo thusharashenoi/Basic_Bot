@@ -58,6 +58,17 @@ CLASS lcl_condition_contract DEFINITION FINAL CREATE PRIVATE.
               date_from       TYPE dats,
               date_to         TYPE dats,
             END OF lty_condition_data,
+            " Combined Excel row for CREATE: header + minimal BVB fields
+            BEGIN OF lty_excel_row,
+              contract_type   TYPE char4,
+              process_variant TYPE char4,
+              ext_num         TYPE char30,
+              cust_owner      TYPE char10,
+              date_from       TYPE dats,
+              date_to         TYPE dats,
+              order_key       TYPE char10,
+              material        TYPE char40,
+            END OF lty_excel_row,
             BEGIN OF lty_message,
               row_number      TYPE i,
               contract_type   TYPE char4,
@@ -95,6 +106,7 @@ CLASS lcl_condition_contract DEFINITION FINAL CREATE PRIVATE.
 
   PRIVATE SECTION.
     DATA: gt_condition_data TYPE  TABLE OF lty_condition_data WITH EMPTY KEY,
+          gt_excel_rows    TYPE  STANDARD TABLE OF lty_excel_row WITH EMPTY KEY, " create-mode raw rows
           gt_message        TYPE STANDARD TABLE OF lty_message,
           gv_success_count  TYPE i,
           gv_error_count    TYPE i.
@@ -144,6 +156,8 @@ CLASS lcl_condition_contract DEFINITION FINAL CREATE PRIVATE.
         IMPORTING
           is_data          TYPE lty_condition_data
           iv_row_number    TYPE i
+          it_bvbdatain     TYPE STANDARD TABLE OF bapiccbvb OPTIONAL
+          it_bvbdatainx    TYPE STANDARD TABLE OF bapiccbvbx OPTIONAL
         RETURNING
           VALUE(rs_result) TYPE lty_message,
 
